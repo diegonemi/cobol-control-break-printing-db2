@@ -1,0 +1,29 @@
+//KC03D26D JOB CLASS=A,MSGCLASS=O,MSGLEVEL=(1,1),NOTIFY=&SYSUID         00010005
+//JOBLIB   DD  DSN=DSND10.SDSNLOAD,DISP=SHR                             00020008
+//***************************************************************       00021008
+//* BORRA ARCHIVO DE SALIDA DB2                                         00022008
+//***************************************************************       00023008
+//STEP1   EXEC PGM=IDCAMS,COND=(8,LT)                                   00024008
+//SYSPRINT  DD SYSOUT=*                                                 00025008
+//SYSIN     DD *                                                        00026008
+  DELETE KC03D26.LISTADO2                                               00028045
+  IF MAXCC = 8 THEN SET MAXCC = 0                                       00029018
+//***************************************************************       00120000
+//* EJECUTA PROGRAMA COBOL CON SQL EMBEBIDO                             00130008
+//***************************************************************       00140000
+//STEP2   EXEC PGM=IKJEFT01,DYNAMNBR=20,COND=(4,LT)                     00160043
+//SYSTSPRT  DD SYSOUT=*                                                 00170008
+//DDS001    DD DSN=KC03D26.LISTADO2,DISP=(,CATLG),                      00181045
+//             UNIT=SYSDA,VOL=SER=ZASWO1,                               00182009
+//             DCB=(LRECL=133,BLKSIZE=0,RECFM=FBA),                     00183046
+//             SPACE=(TRK,(1,1),RLSE)                                   00184009
+//SYSOUT    DD SYSOUT=*                                                 00190008
+//SYSTSIN   DD *                                                        00200008
+  DSN SYSTEM(DBDG)                                                      00210000
+  RUN  PROGRAM(PG42CD26) PLAN(CURSOD26) +                               00220045
+       LIB('KC03D26.CURSOS.PGMLIB')                                     00230044
+  END                                                                   00240000
+//SYSPRINT  DD SYSOUT=*                                                 00250008
+//SYSUDUMP  DD SYSOUT=*                                                 00260008
+//SYSIN     DD *                                                        00270033
+//                                                                      00290000

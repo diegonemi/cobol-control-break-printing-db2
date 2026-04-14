@@ -1,0 +1,707 @@
+       IDENTIFICATION DIVISION.                                         00010000
+       PROGRAM-ID PG41CD26.                                             00020021
+       AUTHOR DIEGO NEMIROVSKY.                                         00030002
+                                                                        00040001
+      ***********************************************                   00050003
+      *                                             *                   00060002
+      * CORTE DE CONTROL DOBLE CON DB2 E IMPRESION  *                   00070021
+      *                                             *                   00080002
+      *                                             *
+      * EJECUTA UN CORTE DE CONTROL DOBLE DESDE     *                   00090021
+      * TABLAS E IMPRIME EN ARCHIVO QSAM            *                   00100021
+      *                                             *                   00110004
+      * NIVEL 1: WS-SEXO-ACT                        *                   00110004
+      * NIVEL 2: WS-TIPCUEN-ACT                     *                   00110004
+      *                                             *                   00110004
+      * ------------------------------------------- *                   00120002
+      *          REGISTRO DE MANTENIMIENTO          *                   00130002
+      * ------------------------------------------- *                   00140002
+      * FECHA       USUARIO  CODIGO  DESCRIPCION    *                   00150002
+      * ----------  -------  ------  -------------- *                   00160002
+      * 02/09/2025  KC03D26  0001    CREACION       *                   00170021
+      *                                             *                   00180002
+      ***********************************************                   00190003
+                                                                        00200001
+       ENVIRONMENT DIVISION.                                            00210000
+       CONFIGURATION SECTION.                                           00220004
+       SPECIAL-NAMES. DECIMAL-POINT IS COMMA.                           00230004
+                                                                        00250004
+       INPUT-OUTPUT SECTION.                                            00260000
+       FILE-CONTROL.                                                    00270004
+                                                                        00380021
+            SELECT S001 ASSIGN DDS001
+            ORGANIZATION IS SEQUENTIAL
+            ACCESS MODE IS SEQUENTIAL
+            FILE STATUS IS SW-FS-S001.
+
+       DATA DIVISION.                                                   00390004
+       FILE SECTION.                                                    00400004
+                                                                        00420021
+       FD  S001
+           RECORDING MODE IS F
+           BLOCK CONTAINS 0 RECORDS
+           RECORD CONTAINS 132 CHARACTERS.
+       01  REG-S001 PIC X(132).
+
+       WORKING-STORAGE SECTION.                                         00540004
+                                                                        00550021
+      *    VARIABLES Y FLAGS DE CONTROL DE ESTADO                       00580024
+       01  SW-FS-S001            PIC X(02).                             00590025
+           88 SW-FS-S001-OK                           VALUE '00'.       00630022
+           88 SW-FS-S001-FIN                          VALUE '10'.       00640022
+
+       01  SW-ESTADO-CURSOR      PIC X(01)            VALUE 'N'.        00620025
+           88 SW-FIN-CURSOR                           VALUE 'Y'.        00630022
+           88 SW-NO-FIN-CURSOR                        VALUE 'N'.        00640022
+
+       01  SW-ESTADO-PROGRAMA    PIC X(01)            VALUE 'N'.
+           88 SW-ERROR-PROGRAMA                       VALUE 'Y'.
+           88 SW-NO-ERROR-PROGRAMA                    VALUE 'N'.
+
+       01  SW-LINEAS             PIC X(01).
+           88 SW-LINEA-CABECERA                       VALUE 'Y'.
+           88 SW-NO-LINEA-CABECERA                    VALUE 'N'.
+
+       01  WS-SQLCODE.
+           05 WS-SQL-OK          PIC S9(09)           VALUE ZEROES.
+           05 WS-SQL-FIN         PIC S9(09)      COMP VALUE +100.
+
+       01  ER-REGISTRO-ERROR.
+           05 ER-PARRAFO         PIC X(30)            VALUE SPACES.
+           05 ER-OPERACION       PIC X(30)            VALUE SPACES.
+           05 ER-OBJETO          PIC X(30)            VALUE SPACES.
+           05 ER-DETALLE         PIC X(30)            VALUE SPACES.
+           05 ER-ESTADO          PIC 9(09)+           VALUE ZEROES.
+
+      *    LAY-OUT DEL REGISTROS DE SALIDA                              00690021
+       01  IM-REGISTRO.
+           05 FILLER             PIC X(01)            VALUE SPACES.
+           05 IM-SEXO            PIC X(13)            VALUE SPACES.
+           05 FILLER             PIC X(03)            VALUE ' | '.
+           05 IM-TIPCUEN         PIC X(16)            VALUE ZEROES.
+           05 FILLER             PIC X(03)            VALUE ' | '.
+           05 IM-NROCUEN         PIC Z(11)            VALUE ZEROES.
+           05 FILLER             PIC X(03)            VALUE ' | '.
+           05 IM-SUCUEN          PIC Z(10)            VALUE ZEROES.
+           05 FILLER             PIC X(03)            VALUE ' | '.
+           05 IM-NROCLI          PIC Z(09)            VALUE ZEROES.
+           05 FILLER             PIC X(03)            VALUE ' | '.
+           05 IM-NOMAPE          PIC X(30)            VALUE SPACES.
+           05 FILLER             PIC X(03)            VALUE ' | '.
+           05 IM-SALDO           PIC $$.$$9,99-       VALUE ZEROES.
+           05 FILLER             PIC X(03)            VALUE ' | '.
+           05 IM-FECSAL.
+              10 IM-DD           PIC X(02)            VALUE SPACES.
+              10 FILLER          PIC X(01)            VALUE '/'.
+              10 IM-MM           PIC X(02)            VALUE SPACES.
+              10 FILLER          PIC X(01)            VALUE '/'.
+              10 IM-AA           PIC X(04)            VALUE SPACES.
+              10 FILLER          PIC X(01)            VALUE SPACES.
+
+       01  IM-LINEA-IMPRESION    PIC X(132)           VALUE SPACES.
+
+      *    VARIABLES DE CONTROL DE CORTE                                00700021
+       77  WS-SEXO-ACT           PIC X(01)            VALUE SPACES.     01100021
+       77  WS-TIPCUEN-ACT        PIC X(02)            VALUE ZEROES.     01100021
+       77  WS-SEXO-ANT           PIC X(01)            VALUE HIGH-VALUE. 01100021
+       77  WS-TIPCUEN-ANT        PIC X(02)            VALUE HIGH-VALUE. 01100021
+
+      *    CONTADORES Y TOTALIZADORES                                   01030024
+       77  CN-REG-LEIDOS         PIC 9(03)            VALUE ZEROES.     01060022
+       77  CN-REG-GRABADOS       PIC 9(03)            VALUE ZEROES.
+       77  AC-IMP-SEXO           PIC S9(05)V99 COMP-3 VALUE ZEROES.     01040024
+       77  AC-IMP-TIPCUEN        PIC S9(05)V99 COMP-3 VALUE ZEROES.     01040024
+       77  AC-IMP-TOTAL          PIC S9(05)V99 COMP-3 VALUE ZEROES.
+       77  AC-REG-SEXO           PIC 9(03)            VALUE ZEROES.     01040024
+       77  AC-REG-TIPCUEN        PIC 9(03)            VALUE ZEROES.     01040024
+       77  AC-REG-TOTAL          PIC 9(03)            VALUE ZEROES.
+
+      *    CONTROL DE PAGINADO                                          01030024
+       77  WS-LINEAS-LIMITE      PIC 9(03)            VALUE 15.
+       77  WS-LINEAS-NECESARIAS  PIC 9(03)            VALUE ZEROES.
+       77  CN-LINEAS             PIC 9(03)            VALUE ZEROES.
+       77  CN-PAGINAS            PIC 9(02)            VALUE 0.
+
+      *    VARIABLES DE EDICION                                         01030024
+       77  ED-REG-LEIDOS         PIC Z9               VALUE ZEROES.     01060022
+       77  ED-REG-GRABADOS       PIC Z9               VALUE ZEROES.
+       77  ED-IMP-SEXO           PIC $$.$$9,99-       VALUE ZEROES.     01040024
+       77  ED-IMP-TIPCUEN        PIC $$.$$9,99-       VALUE ZEROES.     01040024
+       77  ED-IMP-TOTAL          PIC $$.$$9,99-       VALUE ZEROES.     01040024
+       77  ED-REG-SEXO           PIC Z9               VALUE ZEROES.     01040024
+       77  ED-REG-TIPCUEN        PIC Z9               VALUE ZEROES.     01040024
+       77  ED-REG-TOTAL          PIC Z9               VALUE ZEROES.     01040024
+
+      *    DESCRIPTOR DE CAMPOS                                         01030024
+       01  WS-MODIFICAR-DESCRIPCION.
+           05 FL-SOLICITUD       PIC 9(01)            VALUE ZEROES.
+      *       MODIFICAR PIC SEGUN CAMPO ESPECIFICO
+           05 WS-SOLICITUD1      PIC X(02)            VALUE SPACES.
+           05 WS-SOLICITUD2      PIC X(01)            VALUE SPACES.
+           05 WS-RESPUESTA       PIC X(18)            VALUE SPACES.
+
+      *    FECHA DE PROCESO                                             01150021
+       01  WS-FECHA-PROCESO.                                            01160021
+           05 WS-PROCESO-AAAA    PIC 9(04)            VALUE ZEROES.     01170025
+           05 WS-PROCESO-MM      PIC 9(02)            VALUE ZEROES.     01180022
+           05 WS-PROCESO-DD      PIC 9(02)            VALUE ZEROES.     01190022
+           05 FILLER             PIC 9(08)            VALUE ZEROES.     01200025
+                                                                        01230021
+      *   DEFINICIONES DB2
+           EXEC SQL
+              INCLUDE SQLCA
+           END-EXEC.
+
+           EXEC SQL
+              INCLUDE TBCURCLI
+           END-EXEC.
+
+           EXEC SQL
+              INCLUDE TBCURCTA
+           END-EXEC.
+
+           EXEC SQL
+              DECLARE ITEM-CURSOR CURSOR FOR
+
+              SELECT
+                    B.SEXO,
+                    A.TIPCUEN,
+                    A.NROCUEN,
+                    A.SUCUEN,
+                    A.NROCLI,
+                    B.NOMAPE,
+                    A.SALDO,
+                    A.FECSAL
+              FROM  KC02803.TBCURCTA A
+              INNER JOIN
+                    KC02803.TBCURCLI B
+                    ON A.NROCLI = B.NROCLI
+              WHERE A.SALDO > 0
+              ORDER BY B.SEXO, A.TIPCUEN
+
+           END-EXEC.
+
+       PROCEDURE DIVISION.                                              01240004
+                                                                        01250009
+      ********************************************                      01260009
+       0000-PROCESO-PRINCIPAL.                                          01270011
+      ********************************************                      01280009
+                                                                        01290016
+           PERFORM 1000-INICIO   THRU  1000-FIN.                        01300024
+           PERFORM 2000-PROCESO  THRU  2000-FIN.                        01320024
+           PERFORM 3000-FINAL    THRU  3000-FIN.                        01340024
+                                                                        01350017
+       0000-FIN. GOBACK.                                                01360016
+                                                                        01370001
+      ********************************************                      01380016
+       1000-INICIO.                                                     01390016
+      ********************************************                      01400016
+
+      *    ABRE EL CURSOR
+           EXEC SQL
+              OPEN ITEM-CURSOR
+           END-EXEC.
+
+           IF SQLCODE IS NOT EQUAL TO WS-SQL-OK
+              MOVE '4100-ABRIR-CURSOR'      TO ER-PARRAFO
+              MOVE 'OPEN'                   TO ER-OPERACION
+              MOVE 'ITEM-CURSOR'            TO ER-OBJETO
+              MOVE 'ERROR EN APERTURA'      TO ER-DETALLE
+              PERFORM 9100-RUTINA-ERROR-SQL THRU 9100-FIN
+           END-IF.
+
+      *    ABRE EL ARCHIVO
+           OPEN OUTPUT S001.                                            01490023
+
+           IF NOT SW-FS-S001-OK                                         01500023
+              MOVE '1000-INICIO'            TO ER-PARRAFO               01530023
+              MOVE 'OPEN'                   TO ER-OPERACION             01530023
+              MOVE 'S001'                   TO ER-OBJETO
+              MOVE 'ERROR DE APERTURA'      TO ER-DETALLE
+              PERFORM 9000-RUTINA-ERROR     THRU 9000-FIN
+           END-IF.                                                      01540023
+
+       1000-FIN. EXIT.                                                  03020021
+
+      ********************************************                      01380016
+       2000-PROCESO.                                                    01390016
+      ********************************************                      01400016
+
+           PERFORM 7000-IMPRIMIR-TITULO          THRU 7000-FIN.
+           PERFORM 4000-PROCESAR-REGISTRO        THRU 4000-FIN.
+           PERFORM 6000-EJECUTAR-CORTES-FINALES  THRU 6000-FIN.
+           PERFORM 7500-IMPRIMIR-TOTAL-GENERAL   THRU 7500-FIN.
+
+       2000-FIN. EXIT.
+
+      ********************************************                      02860016
+       3000-FINAL.                                                      02870021
+      ********************************************                      02880016
+
+      *    CIERRA EL CURSOR
+           EXEC SQL
+              CLOSE ITEM-CURSOR
+           END-EXEC.
+
+           IF SQLCODE IS NOT EQUAL TO WS-SQL-OK
+              MOVE '3000-FINAL'             TO ER-PARRAFO
+              MOVE 'CLOSE'                  TO ER-OPERACION
+              MOVE 'ITEM-CURSOR'            TO ER-OBJETO
+              MOVE 'ERROR EN CIERRE'        TO ER-DETALLE
+              PERFORM 9100-RUTINA-ERROR-SQL THRU 9100-FIN
+           END-IF.
+
+      *    CIERRA EL ARCHIVO
+           CLOSE S001.                                                  02900024
+
+           IF NOT SW-FS-S001-OK                                         02910024
+              MOVE '3000-FINAL'             TO ER-PARRAFO               01530023
+              MOVE 'CLOSE'                  TO ER-OPERACION             01530023
+              MOVE 'S001'                   TO ER-OBJETO
+              MOVE 'ERROR EN CIERRE'        TO ER-DETALLE
+              PERFORM 9000-RUTINA-ERROR     THRU 9000-FIN
+           END-IF.                                                      02940024
+
+      *    MUESTRA LOS TOTALES POR SPOOL
+           IF SW-NO-ERROR-PROGRAMA
+              MOVE CN-REG-LEIDOS   TO ED-REG-LEIDOS
+              MOVE CN-REG-GRABADOS TO ED-REG-GRABADOS
+              MOVE AC-IMP-TOTAL    TO ED-IMP-TOTAL
+              MOVE AC-REG-TOTAL    TO ED-REG-TOTAL
+
+              DISPLAY 'REGISTROS LEIDOS:   ' ED-REG-LEIDOS
+              DISPLAY 'REGISTROS IMPRESOS: ' ED-REG-GRABADOS
+              DISPLAY ' '
+              DISPLAY 'TOTAL SALDO:        ' ED-IMP-TOTAL
+              DISPLAY 'TOTAL CLIENTES:     ' ED-REG-TOTAL
+           ELSE
+              DISPLAY 'RESUMEN NO DISPONIBLE. FINALIZACION ERRONEA.'
+           END-IF.
+
+       3000-FIN. EXIT.                                                  03020021
+
+      ********************************************                      01380016
+       4000-PROCESAR-REGISTRO.                                          01390016
+      ********************************************                      01400016
+
+           PERFORM UNTIL SW-FIN-CURSOR
+
+              EXEC SQL
+                 FETCH
+                    ITEM-CURSOR
+                    INTO
+                       :DCLTBCURCLI.WT-SEXO,
+                       :DCLTBCURCTA.WS-TIPCUEN,
+                       :DCLTBCURCTA.WS-NROCUEN,
+                       :DCLTBCURCTA.WS-SUCUEN,
+                       :DCLTBCURCTA.WS-NROCLI,
+                       :DCLTBCURCLI.WT-NOMAPE,
+                       :DCLTBCURCTA.WS-SALDO,
+                       :DCLTBCURCTA.WS-FECSAL
+              END-EXEC
+
+              MOVE WT-SEXO    TO WS-SEXO-ACT
+              MOVE WS-TIPCUEN TO WS-TIPCUEN-ACT
+
+              EVALUATE SQLCODE
+                 WHEN WS-SQL-OK
+                    PERFORM 5000-CONTROLAR-CORTES  THRU 5000-FIN
+                    PERFORM 7200-IMPRIMIR-REGISTRO THRU 7200-FIN
+                    ADD 1 TO CN-REG-LEIDOS
+                    ADD 1 TO AC-REG-SEXO
+                    ADD 1 TO AC-REG-TIPCUEN
+                    ADD 1 TO AC-REG-TOTAL
+                    ADD WS-SALDO TO AC-IMP-SEXO
+                    ADD WS-SALDO TO AC-IMP-TIPCUEN
+                    ADD WS-SALDO TO AC-IMP-TOTAL
+                    MOVE WS-SEXO-ACT    TO WS-SEXO-ANT
+                    MOVE WS-TIPCUEN-ACT TO WS-TIPCUEN-ANT
+                 WHEN WS-SQL-FIN
+                    SET SW-FIN-CURSOR TO TRUE
+                 WHEN OTHER
+                    MOVE '2000-PROCESO'            TO ER-PARRAFO
+                    MOVE 'FETCH'                   TO ER-OPERACION
+                    MOVE 'ITEM-CURSOR'             TO ER-OBJETO
+                    MOVE 'ERROR EN LECTURA'        TO ER-DETALLE
+                    PERFORM 9100-RUTINA-ERROR-SQL  THRU 9100-FIN
+              END-EVALUATE
+
+           END-PERFORM.
+
+       4000-FIN. EXIT.                                                  03020021
+
+      ********************************************                      02220022
+       5000-CONTROLAR-CORTES.
+      ********************************************
+
+           IF WS-SEXO-ACT = WS-SEXO-ANT
+              IF WS-TIPCUEN-ACT = WS-TIPCUEN-ANT
+                 CONTINUE
+              ELSE
+      *          EJECUTA CORTE DE NIVEL 2
+                 PERFORM 7300-IMPRIMIR-TOTAL-TIPCUEN THRU 7300-FIN
+                 PERFORM 7100-IMPRIMIR-CABECERA THRU 7100-FIN
+                 MOVE ZERO TO AC-REG-TIPCUEN
+                 MOVE ZERO TO AC-IMP-TIPCUEN
+              END-IF
+           ELSE
+      *       EJECUTA CORTE DE NIVEL 2
+              IF WS-TIPCUEN-ANT NOT = HIGH-VALUE
+                 PERFORM 7300-IMPRIMIR-TOTAL-TIPCUEN THRU 7300-FIN
+              END-IF
+              MOVE ZERO TO AC-REG-TIPCUEN
+              MOVE ZERO TO AC-IMP-TIPCUEN
+      *       EJECUTA CORTE DE NIVEL 1
+              IF WS-SEXO-ANT NOT = HIGH-VALUE
+                 PERFORM 7400-IMPRIMIR-TOTAL-SEXO THRU 7400-FIN
+              END-IF
+              MOVE ZERO TO AC-REG-SEXO
+              MOVE ZERO TO AC-IMP-SEXO
+              PERFORM 7100-IMPRIMIR-CABECERA THRU 7100-FIN
+           END-IF.
+
+       5000-FIN. EXIT.
+
+      ********************************************                      02220022
+       6000-EJECUTAR-CORTES-FINALES.
+      ********************************************
+
+      *    EJECUTA CORTES FINALES
+           PERFORM 7300-IMPRIMIR-TOTAL-TIPCUEN THRU 7300-FIN.
+           PERFORM 7400-IMPRIMIR-TOTAL-SEXO THRU 7400-FIN.
+
+       6000-FIN. EXIT.
+
+      ********************************************                      02220022
+       7000-IMPRIMIR-TITULO.
+      ********************************************
+
+      *    IMPRIME LINEA DE SALTO DE PAGINA
+           SET SW-LINEA-CABECERA TO TRUE
+           MOVE ALL '=' TO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+      *    IMPRIME TITULO
+           ADD 1 TO CN-PAGINAS.
+           MOVE SPACES TO IM-LINEA-IMPRESION.
+           MOVE FUNCTION CURRENT-DATE TO WS-FECHA-PROCESO.
+           STRING
+           'FECHA: ' WS-PROCESO-DD '/' WS-PROCESO-MM '/' WS-PROCESO-AAAA
+           '          * DETALLE DE CUENTAS *          '
+           'PGMFBD26 - KC03D26 - PAGINA: ' CN-PAGINAS
+           DELIMITED BY SIZE INTO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+      *    IMPRIME BLANCO
+           MOVE SPACES TO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+       7000-FIN. EXIT.
+
+      ********************************************                      02220022
+       7100-IMPRIMIR-CABECERA.
+      ********************************************
+
+      *    VERIFICA ESPACIO EN PAGINA ACTUAL Y SALTA DE PAGINA SI APLICA
+           MOVE 6 TO WS-LINEAS-NECESARIAS.
+           IF CN-LINEAS + WS-LINEAS-NECESARIAS > WS-LINEAS-LIMITE
+              PERFORM 7000-IMPRIMIR-TITULO THRU 7000-FIN
+           END-IF.
+
+      *    IMPRIME DETALLE
+           MOVE 4 TO FL-SOLICITUD
+           PERFORM 8100-MODIFICAR-DESCRIPCION THRU 8100-FIN.
+
+           MOVE SPACES TO IM-LINEA-IMPRESION.
+           STRING 'SEXO: ' WS-RESPUESTA
+           DELIMITED BY SIZE INTO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+           MOVE 2 TO FL-SOLICITUD
+           PERFORM 8100-MODIFICAR-DESCRIPCION THRU 8100-FIN.
+
+           MOVE SPACES TO IM-LINEA-IMPRESION.
+           STRING 'TIPO DE CUENTA: ' WS-RESPUESTA
+           DELIMITED BY SIZE INTO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+      *    IMPRIME BLANCO
+           MOVE SPACES TO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+      *    IMPRIME CABECERA DE CAMPOS
+           MOVE SPACES TO IM-LINEA-IMPRESION.
+           STRING '     SEXO      '
+           '    TIPO CUENTA    '   *> = MEDIDA QUE DATOS + 1 DE CADA
+           '   NŒ CUENTA  '        *>   LADO + 1 AL INICIO
+           '   SUCURSAL  '
+           '   CLIENTE  '
+           '        APELLIDO Y NOMBRE        '
+           '    SALDO    '
+           '    FECHA    '
+           DELIMITED BY SIZE INTO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+      *    IMPRIME LINEA
+           MOVE ALL '-' TO IM-LINEA-IMPRESION.
+           WRITE REG-S001 FROM IM-LINEA-IMPRESION.
+
+       7100-FIN. EXIT.
+
+      ********************************************                      02220022
+       7200-IMPRIMIR-REGISTRO.
+      ********************************************
+
+      *    VERIFICA ESPACIO EN PAGINA ACTUAL Y SALTA DE PAGINA SI APLICA
+           MOVE 1 TO WS-LINEAS-NECESARIAS.
+           IF CN-LINEAS + WS-LINEAS-NECESARIAS > WS-LINEAS-LIMITE
+              PERFORM 7000-IMPRIMIR-TITULO THRU 7000-FIN
+              PERFORM 7100-IMPRIMIR-CABECERA THRU 7100-FIN
+           END-IF.
+
+      *    PREPARA REGISTRO
+           EVALUATE WT-SEXO
+              WHEN 'F'   MOVE 'FEMENINO     ' TO IM-SEXO
+              WHEN 'M'   MOVE 'MASCULINO    ' TO IM-SEXO
+              WHEN 'O'   MOVE 'OTRO         ' TO IM-SEXO
+              WHEN OTHER MOVE 'SEXO INVALIDO' TO IM-SEXO
+           END-EVALUATE.
+
+           EVALUATE WS-TIPCUEN
+              WHEN '01'  MOVE 'CAJA DE AHORRO  ' TO IM-TIPCUEN
+              WHEN '02'  MOVE 'CUENTA CORRIENTE' TO IM-TIPCUEN
+              WHEN '03'  MOVE 'PLAZO FIJO      ' TO IM-TIPCUEN
+              WHEN OTHER MOVE 'CUENTA INVALIDA ' TO IM-TIPCUEN
+           END-EVALUATE.
+
+           MOVE WS-NROCUEN TO IM-NROCUEN.
+           MOVE WS-SUCUEN  TO IM-SUCUEN.
+           MOVE WS-NROCLI  TO IM-NROCLI.
+           MOVE WT-NOMAPE  TO IM-NOMAPE.
+           MOVE WS-SALDO   TO IM-SALDO.
+           MOVE WS-FECSAL  TO IM-FECSAL.
+
+      *    IMPRIME REGISTRO
+           WRITE REG-S001 FROM IM-REGISTRO.
+
+           IF SW-FS-S001-OK
+              ADD 1 TO CN-LINEAS
+              ADD 1 TO CN-REG-GRABADOS
+           ELSE
+              MOVE '7000-IMPRIMIR-REGISTRO' TO ER-PARRAFO
+              MOVE 'WRITE'                  TO ER-OPERACION
+              MOVE 'S001'                   TO ER-OBJETO
+              MOVE 'ERROR EN ESCRITURA'     TO ER-DETALLE
+              PERFORM 9000-RUTINA-ERROR     THRU 9000-FIN
+           END-IF.
+
+       7200-FIN. EXIT.
+
+      ********************************************                      02220022
+       7300-IMPRIMIR-TOTAL-TIPCUEN.
+      ********************************************
+
+      *    VERIFICA ESPACIO EN PAGINA ACTUAL Y SALTA DE PAGINA SI APLICA
+           MOVE 5 TO WS-LINEAS-NECESARIAS.
+           IF CN-LINEAS + WS-LINEAS-NECESARIAS > WS-LINEAS-LIMITE
+              PERFORM 7000-IMPRIMIR-TITULO THRU 7000-FIN
+           END-IF.
+
+      *    IMPRIME BLANCO
+           MOVE SPACES TO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+      *    PREPARA LOS CAMPOS DE EDICION
+           MOVE AC-IMP-TIPCUEN TO ED-IMP-TIPCUEN.
+           MOVE AC-REG-TIPCUEN TO ED-REG-TIPCUEN.
+
+      *    MODIFICA LA DESCRIPCION DE CAMPOS
+           MOVE 1 TO FL-SOLICITUD.
+           PERFORM 8100-MODIFICAR-DESCRIPCION THRU 8100-FIN.
+
+      *    IMPRIME LOS TOTALES
+           MOVE SPACES TO IM-LINEA-IMPRESION.
+           STRING 'SALDO ' WS-RESPUESTA '         : ' ED-IMP-TIPCUEN
+           DELIMITED BY SIZE INTO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+           MOVE SPACES TO IM-LINEA-IMPRESION.
+           STRING 'REGISTROS ' WS-RESPUESTA '     :  ' ED-REG-TIPCUEN
+           DELIMITED BY SIZE INTO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+      *    IMPRIME BLANCO
+           MOVE SPACES TO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+       7300-FIN. EXIT.
+
+      ********************************************                      02220022
+       7400-IMPRIMIR-TOTAL-SEXO.
+      ********************************************
+
+      *    VERIFICA ESPACIO EN PAGINA ACTUAL Y SALTA DE PAGINA SI APLICA
+           MOVE 3 TO WS-LINEAS-NECESARIAS.
+           IF CN-LINEAS + WS-LINEAS-NECESARIAS > WS-LINEAS-LIMITE
+              PERFORM 7000-IMPRIMIR-TITULO THRU 7000-FIN
+           END-IF.
+
+      *    PREPARA LOS CAMPOS DE EDICION
+           MOVE AC-IMP-SEXO TO ED-IMP-SEXO.
+           MOVE AC-REG-SEXO TO ED-REG-SEXO.
+
+      *    MODIFICA LA DESCRIPCION DE CAMPOS
+           MOVE 3 TO FL-SOLICITUD.
+           PERFORM 8100-MODIFICAR-DESCRIPCION THRU 8100-FIN.
+
+      *    IMPRIME LOS TOTALES
+           MOVE SPACES TO IM-LINEA-IMPRESION.
+           STRING 'SALDO SEXO ' WS-RESPUESTA '    : ' ED-IMP-SEXO
+           DELIMITED BY SIZE INTO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+           MOVE SPACES TO IM-LINEA-IMPRESION.
+           STRING 'REGISTROS SEXO ' WS-RESPUESTA ':  ' ED-REG-SEXO
+           DELIMITED BY SIZE INTO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+      *    IMPRIME BLANCO
+           MOVE SPACES TO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+       7400-FIN. EXIT.
+
+      ********************************************                      02220022
+       7500-IMPRIMIR-TOTAL-GENERAL.
+      ********************************************
+
+      *    VERIFICA ESPACIO EN PAGINA ACTUAL Y SALTA DE PAGINA SI APLICA
+           MOVE 3 TO WS-LINEAS-NECESARIAS.
+           IF CN-LINEAS + WS-LINEAS-NECESARIAS > WS-LINEAS-LIMITE
+              PERFORM 7000-IMPRIMIR-TITULO THRU 7000-FIN
+           END-IF.
+
+      *    PREPARA LOS CAMPOS DE EDICION
+           MOVE AC-IMP-TOTAL TO ED-IMP-TOTAL.
+           MOVE AC-REG-TOTAL TO ED-REG-TOTAL.
+
+      *    IMPRIME LOS TOTALES
+           MOVE SPACES TO IM-LINEA-IMPRESION.
+           STRING 'SALDO TOTAL:       ' ED-IMP-TOTAL
+           DELIMITED BY SIZE INTO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+           MOVE SPACES TO IM-LINEA-IMPRESION.
+           STRING 'REGISTROS TOTALES: ' ED-REG-TOTAL
+           DELIMITED BY SIZE INTO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+      *    IMPRIME BLANCO
+           MOVE SPACES TO IM-LINEA-IMPRESION.
+           PERFORM 8000-IMPRIMIR-EN-ARCHIVO THRU 8000-FIN.
+
+       7500-FIN. EXIT.
+
+      ********************************************                      02220022
+       8000-IMPRIMIR-EN-ARCHIVO.
+      ********************************************
+
+           IF SW-LINEA-CABECERA
+      *       IMPRIME LINEA CON SALTO DE PAGINA
+              WRITE REG-S001 FROM IM-LINEA-IMPRESION AFTER PAGE
+              MOVE ZERO TO CN-LINEAS
+              SET SW-NO-LINEA-CABECERA TO TRUE
+           ELSE
+      *       IMPRIME LINEA GENERAL
+              WRITE REG-S001 FROM IM-LINEA-IMPRESION
+           END-IF.
+
+           IF SW-FS-S001-OK
+              ADD 1 TO CN-LINEAS
+           ELSE
+              MOVE '8000-IMPRIMIR-EN-ARCHIVO' TO ER-PARRAFO
+              MOVE 'WRITE'                 TO ER-OPERACION
+              MOVE 'S001'                  TO ER-OBJETO
+              MOVE 'ERROR EN ESCRITURA'    TO ER-DETALLE
+              PERFORM 9000-RUTINA-ERROR    THRU 9000-FIN
+           END-IF.
+
+       8000-FIN. EXIT.
+
+      ********************************************                      02860016
+       8100-MODIFICAR-DESCRIPCION.                                      02870021
+      ********************************************                      02880016
+
+           EVALUATE FL-SOLICITUD
+              WHEN 1 MOVE WS-TIPCUEN-ANT TO WS-SOLICITUD1
+              WHEN 2 MOVE WS-TIPCUEN-ACT TO WS-SOLICITUD1
+              WHEN 3 MOVE WS-SEXO-ANT    TO WS-SOLICITUD2
+              WHEN 4 MOVE WS-SEXO-ACT    TO WS-SOLICITUD2
+              WHEN OTHER CONTINUE
+           END-EVALUATE.
+
+           IF FL-SOLICITUD IS EQUAL TO 1 OR FL-SOLICITUD IS EQUAL TO 2
+              EVALUATE WS-SOLICITUD1
+                 WHEN '01'  MOVE 'CAJAS DE AHORRO   ' TO WS-RESPUESTA
+                 WHEN '02'  MOVE 'CUENTAS CORRIENTES' TO WS-RESPUESTA
+                 WHEN '03'  MOVE 'PLAZOS FIJOS      ' TO WS-RESPUESTA
+                 WHEN OTHER MOVE 'CUENTA INVALIDA   ' TO WS-RESPUESTA
+              END-EVALUATE
+           END-IF.
+
+           IF FL-SOLICITUD IS EQUAL TO 3 OR FL-SOLICITUD IS EQUAL TO 4
+              EVALUATE WS-SOLICITUD2
+                 WHEN 'F'   MOVE 'FEMENINO          ' TO WS-RESPUESTA
+                 WHEN 'M'   MOVE 'MASCULINO         ' TO WS-RESPUESTA
+                 WHEN 'O'   MOVE 'OTRO              ' TO WS-RESPUESTA
+                 WHEN OTHER MOVE 'INVALIDOA         ' TO WS-RESPUESTA
+              END-EVALUATE
+           END-IF.
+
+           MOVE ZEROS TO FL-SOLICITUD.
+
+       8100-FIN. EXIT.
+
+      ********************************************                      02860016
+       9000-RUTINA-ERROR.                                               02870021
+      ********************************************                      02880016
+
+           MOVE SW-FS-S001 TO ER-ESTADO.
+
+           DISPLAY 'INFORME DE ERROR'.
+           DISPLAY 'PARRAFO:   ' ER-PARRAFO.
+           DISPLAY 'OPERACION: ' ER-OPERACION.
+           DISPLAY 'ARCHIVO:   ' ER-OBJETO.
+           DISPLAY 'DETALLE:   ' ER-DETALLE.
+           DISPLAY 'ESTADO:    ' SW-FS-S001.
+
+      *    RETORNA INFORMANDO UN PRBLEMA DE I/O                         02780026
+
+           SET SW-ERROR-PROGRAMA TO TRUE.
+           SET SW-FIN-CURSOR     TO TRUE.
+
+           MOVE 1024 TO RETURN-CODE.                                    02930024
+
+       9000-FIN. EXIT.                                                  03030024
+
+      ********************************************
+       9100-RUTINA-ERROR-SQL.
+      ********************************************
+
+           MOVE SQLCODE TO ER-ESTADO.
+
+           DISPLAY 'INFORME DE ERROR (DB2)'.
+           DISPLAY 'PARRAFO:   ' ER-PARRAFO.
+           DISPLAY 'OPERACION: ' ER-OPERACION.
+           DISPLAY 'OBJETO:    ' ER-OBJETO.
+           DISPLAY 'DETALLE:   ' ER-DETALLE.
+           DISPLAY 'ESTADO:    ' ER-ESTADO.
+
+      *    RETORNA INFORMANDO UN PRBLEMA DE DB2                         02780026
+
+           SET SW-ERROR-PROGRAMA TO TRUE.
+           SET SW-FIN-CURSOR     TO TRUE.
+
+           MOVE 0004 TO RETURN-CODE.                                    02930024
+
+       9100-FIN. EXIT.
